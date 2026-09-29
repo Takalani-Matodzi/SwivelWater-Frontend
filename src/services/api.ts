@@ -161,42 +161,151 @@ export interface RefillLoyaltyTransaction {
 // RESPONSE PARSER
 // =========================================================
 
-async function parseResponse(response: Response) {
-  const data = await response.json().catch(() => null);
+async function parseResponse<T>(response: Response): Promise<T> {
+  const contentType = response.headers.get("content-type") ?? "";
+  const rawText = await response.text();
+
+  let data: unknown = null;
+
+  if (rawText.trim()) {
+    if (contentType.includes("application/json")) {
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        data = rawText;
+      }
+    } else {
+      // Some ASP.NET Core responses may be plain text.
+      // Try JSON first, then fall back to the raw text.
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        data = rawText;
+      }
+    }
+  }
 
   if (!response.ok) {
-    if (typeof data === "string") {
-      throw new Error(data);
+    // -----------------------------------------------------
+    // Plain-text backend message
+    // -----------------------------------------------------
+    if (typeof data === "string" && data.trim()) {
+      const message = data.trim();
+
+      // Make duplicate-registration errors user-friendly.
+      if (
+        response.status === 409 &&
+        message.toLowerCase() === "email is already registered."
+      ) {
+        throw new Error(
+          "This email address is already registered. Please use a different email address or log in.",
+        );
+      }
+
+      throw new Error(message);
     }
 
-    if (data?.message) {
-      throw new Error(data.message);
-    }
+    // -----------------------------------------------------
+    // JSON object errors
+    // -----------------------------------------------------
+    if (typeof data === "object" && data !== null) {
+      const errorData = data as {
+        message?: unknown;
+        detail?: unknown;
+        title?: unknown;
+        error?: unknown;
+        errors?: unknown;
+      };
 
-    if (data?.detail) {
-      throw new Error(data.detail);
-    }
+      if (typeof errorData.message === "string" && errorData.message.trim()) {
+        throw new Error(errorData.message);
+      }
 
-    if (data?.title && !data?.errors) {
-      throw new Error(data.title);
-    }
+      if (typeof errorData.detail === "string" && errorData.detail.trim()) {
+        throw new Error(errorData.detail);
+      }
 
-    if (data?.errors) {
-      const validationMessages = Object.values(data.errors)
-        .flat()
-        .filter((value): value is string => typeof value === "string");
+      if (typeof errorData.error === "string" && errorData.error.trim()) {
+        throw new Error(errorData.error);
+      }
 
-      if (validationMessages.length > 0) {
-        throw new Error(validationMessages.join(" "));
+      if (typeof errorData.title === "string" && errorData.title.trim()) {
+        throw new Error(errorData.title);
+      }
+
+      // ASP.NET validation errors
+      if (errorData.errors && typeof errorData.errors === "object") {
+        const validationMessages = Object.values(
+          errorData.errors as Record<string, unknown>,
+        )
+          .flatMap((value) => (Array.isArray(value) ? value : [value]))
+          .filter(
+            (value): value is string =>
+              typeof value === "string" && value.trim().length > 0,
+          );
+
+        if (validationMessages.length > 0) {
+          throw new Error(validationMessages.join(" "));
+        }
       }
     }
 
-    throw new Error(`Request failed: ${response.status}`);
+    // -----------------------------------------------------
+    // Friendly fallback based on HTTP status
+    // -----------------------------------------------------
+    switch (response.status) {
+      case 400:
+        throw new Error(
+          "The information provided is not valid. Please check your details and try again.",
+        );
+
+      case 401:
+        throw new Error(
+          "Your login details are incorrect or your session has expired.",
+        );
+
+      case 403:
+        throw new Error("You do not have permission to perform this action.");
+
+      case 404:
+        throw new Error("The requested information could not be found.");
+
+      case 409:
+        throw new Error(
+          "This request conflicts with existing information. Please check your details and try again.",
+        );
+
+      case 422:
+        throw new Error(
+          "The information provided could not be processed. Please check your details.",
+        );
+
+      case 429:
+        throw new Error(
+          "Too many requests were made. Please wait a moment and try again.",
+        );
+
+      case 500:
+        throw new Error(
+          "Something went wrong on the server. Please try again later.",
+        );
+
+      case 502:
+      case 503:
+      case 504:
+        throw new Error(
+          "The Swivel Water service is temporarily unavailable. Please try again shortly.",
+        );
+
+      default:
+        throw new Error(
+          "Something went wrong while processing your request. Please try again.",
+        );
+    }
   }
 
-  return data;
+  return data as T;
 }
-
 // =========================================================
 // BASIC REQUEST
 // =========================================================
@@ -213,7 +322,7 @@ async function request<T>(
     },
   });
 
-  return parseResponse(response);
+  return parseResponse<T>(response);
 }
 
 // =========================================================
@@ -724,8 +833,55 @@ export type AdminProduct = {
   updatedAt: string;
 };
 
+export type AdminProductPayload = {
+  productName: string;
+  description?: string;
+  price: number;
+  stockQuantity: number;
+  productType: "BOTTLED" | "REFILL" | "REFILL_CARD";
+  imageUrl?: string;
+  isActive: boolean;
+};
+
 export async function getAdminProducts(): Promise<AdminProduct[]> {
   return authenticatedRequest<AdminProduct[]>("/AdminProducts");
+}
+
+export async function createAdminProduct(data: AdminProductPayload): Promise<{
+  message: string;
+  product: AdminProduct;
+}> {
+  return authenticatedRequest<{
+    message: string;
+    product: AdminProduct;
+  }>("/AdminProducts", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateAdminProduct(
+  productId: string,
+  data: AdminProductPayload,
+): Promise<{ message: string }> {
+  return authenticatedRequest<{ message: string }>(
+    `/AdminProducts/${productId}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+export async function deleteAdminProduct(
+  productId: string,
+): Promise<{ message: string }> {
+  return authenticatedRequest<{ message: string }>(
+    `/AdminProducts/${productId}`,
+    {
+      method: "DELETE",
+    },
+  );
 }
 // ======================================================
 // ADMIN PAYMENTS

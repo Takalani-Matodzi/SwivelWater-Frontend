@@ -7,6 +7,9 @@ import {
   getAdminPayments,
   getAdminDeliveries,
   getAdminProducts,
+  createAdminProduct,
+  updateAdminProduct,
+  deleteAdminProduct,
   getAdminEmployees,
   getAdminReports,
   getProfile,
@@ -141,6 +144,19 @@ function AdminDashboard() {
   const [deliveriesLoading, setDeliveriesLoading] = useState(false);
   const [products, setProducts] = useState<AdminProduct[]>([]);
   const [productsLoading, setProductsLoading] = useState(false);
+  const [showProductModal, setShowProductModal] = useState(false);
+  const [savingProduct, setSavingProduct] = useState(false);
+  const [editingProductId, setEditingProductId] = useState<string | null>(null);
+
+  const [newProduct, setNewProduct] = useState({
+    productName: "",
+    description: "",
+    price: "",
+    stockQuantity: "",
+    productType: "BOTTLED" as "BOTTLED" | "REFILL" | "REFILL_CARD",
+    imageUrl: "",
+    isActive: true,
+  });
   const [payments, setPayments] = useState<AdminPayment[]>([]);
   const [paymentsLoading, setPaymentsLoading] = useState(false);
   const [reports, setReports] = useState<AdminReportsData | null>(null);
@@ -730,7 +746,141 @@ function AdminDashboard() {
       setCreatingEmployee(false);
     }
   }
+  function resetProductForm() {
+    setNewProduct({
+      productName: "",
+      description: "",
+      price: "",
+      stockQuantity: "",
+      productType: "BOTTLED",
+      imageUrl: "",
+      isActive: true,
+    });
+  }
 
+  function closeProductModal() {
+    if (savingProduct) {
+      return;
+    }
+
+    setShowProductModal(false);
+    setEditingProductId(null);
+    resetProductForm();
+  }
+
+  function handleEditProduct(product: AdminProduct) {
+    setEditingProductId(product.productId);
+
+    setNewProduct({
+      productName: product.productName,
+      description: product.description ?? "",
+      price: String(product.price),
+      stockQuantity: String(product.stockQuantity),
+      productType:
+        product.productType === "REFILL"
+          ? "REFILL"
+          : product.productType === "REFILL_CARD"
+            ? "REFILL_CARD"
+            : "BOTTLED",
+      imageUrl: product.imageUrl ?? "",
+      isActive: product.isActive,
+    });
+
+    setMessage("");
+    setShowProductModal(true);
+  }
+
+  async function handleSaveProduct() {
+    const productName = newProduct.productName.trim();
+    const description = newProduct.description.trim();
+    const imageUrl = newProduct.imageUrl.trim();
+
+    const price = Number(newProduct.price);
+    const stockQuantity = Number(newProduct.stockQuantity);
+
+    if (!productName) {
+      setMessage("Product name is required.");
+      return;
+    }
+
+    if (!newProduct.price || Number.isNaN(price) || price < 0) {
+      setMessage("Please enter a valid product price.");
+      return;
+    }
+
+    if (
+      newProduct.stockQuantity.trim() === "" ||
+      Number.isNaN(stockQuantity) ||
+      stockQuantity < 0
+    ) {
+      setMessage("Please enter a valid stock quantity.");
+      return;
+    }
+    try {
+      setSavingProduct(true);
+      setMessage("");
+
+      const payload = {
+        productName,
+        description: description || undefined,
+        price,
+        stockQuantity,
+        productType: newProduct.productType,
+        imageUrl: imageUrl || undefined,
+        isActive: newProduct.isActive,
+      };
+
+      if (editingProductId) {
+        const result = await updateAdminProduct(editingProductId, payload);
+
+        setMessage(result.message);
+      } else {
+        const result = await createAdminProduct(payload);
+
+        setMessage(result.message);
+      }
+
+      const updatedProducts = await getAdminProducts();
+      setProducts(updatedProducts);
+
+      setShowProductModal(false);
+      setEditingProductId(null);
+      resetProductForm();
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "Could not save the product.",
+      );
+    } finally {
+      setSavingProduct(false);
+    }
+  }
+
+  async function handleRemoveProduct(product: AdminProduct) {
+    const confirmed = window.confirm(
+      `Remove "${product.productName}" from the catalogue?`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setMessage("");
+
+      const result = await deleteAdminProduct(product.productId);
+
+      const updatedProducts = await getAdminProducts();
+      setProducts(updatedProducts);
+
+      setMessage(result.message);
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Could not remove the product.",
+      );
+    }
+  }
   const filteredEmployees = useMemo(() => {
     const search = employeeSearch.trim().toLowerCase();
 
@@ -3649,13 +3799,28 @@ function AdminDashboard() {
 
             {activeSection === "products" && (
               <section className="admin-section-card">
-                <div className="admin-section-card-header">
-                  <h1>Products</h1>
+                <div className="admin-section-card-header admin-employee-page-header">
+                  <div>
+                    <h1>Products</h1>
 
-                  <p>
-                    Manage bottled water, accessories, refills and loyalty
-                    products.
-                  </p>
+                    <p>
+                      Manage bottled water, accessories, refills and loyalty
+                      products.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="admin-primary-button admin-add-employee-button"
+                    onClick={() => {
+                      setEditingProductId(null);
+                      resetProductForm();
+                      setMessage("");
+                      setShowProductModal(true);
+                    }}
+                  >
+                    + Add Product
+                  </button>
                 </div>
 
                 <div className="admin-mini-grid">
@@ -3696,6 +3861,7 @@ function AdminDashboard() {
                           <th>Price</th>
                           <th>Stock</th>
                           <th>Status</th>
+                          <th>Actions</th>
                         </tr>
                       </thead>
 
@@ -3704,6 +3870,12 @@ function AdminDashboard() {
                           <tr key={product.productId}>
                             <td>
                               <strong>{product.productName}</strong>
+
+                              {product.description && (
+                                <span className="admin-card-subtitle">
+                                  {product.description}
+                                </span>
+                              )}
                             </td>
 
                             <td>{product.productType}</td>
@@ -3725,14 +3897,37 @@ function AdminDashboard() {
                                 {product.isActive ? "ACTIVE" : "INACTIVE"}
                               </span>
                             </td>
+
+                            <td>
+                              <div className="admin-shift-row-actions">
+                                <button
+                                  type="button"
+                                  className="admin-edit-button"
+                                  onClick={() => handleEditProduct(product)}
+                                >
+                                  Edit
+                                </button>
+
+                                <button
+                                  type="button"
+                                  className="admin-cancel-button"
+                                  onClick={() => handleRemoveProduct(product)}
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            </td>
                           </tr>
                         ))}
 
                         {products.length === 0 && (
                           <tr>
                             <td
-                              colSpan={5}
-                              style={{ textAlign: "center", padding: "24px" }}
+                              colSpan={6}
+                              style={{
+                                textAlign: "center",
+                                padding: "24px",
+                              }}
                             >
                               No products found.
                             </td>
@@ -4607,7 +4802,194 @@ function AdminDashboard() {
                 )}
               </>
             )}
+            {/* PRODUCT MODAL */}
 
+            {showProductModal && (
+              <div className="admin-modal-backdrop">
+                <div className="admin-employee-modal">
+                  <div className="admin-employee-modal-header">
+                    <div>
+                      <h2>
+                        {editingProductId ? "Edit Product" : "Add New Product"}
+                      </h2>
+                      <p>
+                        {editingProductId
+                          ? "Update the selected product."
+                          : "Add a new product to the Swivel Water catalogue."}
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      className="admin-modal-close"
+                      onClick={closeProductModal}
+                      disabled={savingProduct}
+                    >
+                      ×
+                    </button>
+                  </div>
+
+                  <div className="admin-employee-modal-body">
+                    <div className="admin-modal-form-grid">
+                      <div>
+                        <label htmlFor="productName">Product Name</label>
+                        <input
+                          id="productName"
+                          type="text"
+                          value={newProduct.productName}
+                          onChange={(event) =>
+                            setNewProduct((previous) => ({
+                              ...previous,
+                              productName: event.target.value,
+                            }))
+                          }
+                          placeholder="e.g. 500ml Still"
+                        />
+                      </div>
+
+                      <div>
+                        <label htmlFor="productType">Product Type</label>
+                        <select
+                          id="productType"
+                          value={newProduct.productType}
+                          onChange={(event) =>
+                            setNewProduct((previous) => ({
+                              ...previous,
+                              productType: event.target.value as
+                                "BOTTLED" | "REFILL" | "REFILL_CARD",
+                            }))
+                          }
+                        >
+                          <option value="BOTTLED">Bottled</option>
+                          <option value="REFILL">Water Refill</option>
+                          <option value="REFILL_CARD">
+                            Refill Loyalty Card
+                          </option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label htmlFor="productPrice">Price (R)</label>
+                        <input
+                          id="productPrice"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={newProduct.price}
+                          onChange={(event) =>
+                            setNewProduct((previous) => ({
+                              ...previous,
+                              price: event.target.value,
+                            }))
+                          }
+                          placeholder="0.00"
+                        />
+                      </div>
+
+                      <div>
+                        <label htmlFor="productStock">Stock Quantity</label>
+                        <input
+                          id="productStock"
+                          type="number"
+                          min="0"
+                          value={newProduct.stockQuantity}
+                          onChange={(event) =>
+                            setNewProduct((previous) => ({
+                              ...previous,
+                              stockQuantity: event.target.value,
+                            }))
+                          }
+                          placeholder="0"
+                        />
+                      </div>
+
+                      <div>
+                        <label htmlFor="productImageUrl">Image URL</label>
+                        <input
+                          id="productImageUrl"
+                          type="text"
+                          value={newProduct.imageUrl}
+                          onChange={(event) =>
+                            setNewProduct((previous) => ({
+                              ...previous,
+                              imageUrl: event.target.value,
+                            }))
+                          }
+                          placeholder="https://..."
+                        />
+                      </div>
+
+                      <div>
+                        <label htmlFor="productActive">Status</label>
+                        <select
+                          id="productActive"
+                          value={newProduct.isActive ? "ACTIVE" : "INACTIVE"}
+                          onChange={(event) =>
+                            setNewProduct((previous) => ({
+                              ...previous,
+                              isActive: event.target.value === "ACTIVE",
+                            }))
+                          }
+                        >
+                          <option value="ACTIVE">Active</option>
+                          <option value="INACTIVE">Inactive</option>
+                        </select>
+                      </div>
+
+                      <div style={{ gridColumn: "1 / -1" }}>
+                        <label htmlFor="productDescription">Description</label>
+                        <textarea
+                          id="productDescription"
+                          value={newProduct.description}
+                          onChange={(event) =>
+                            setNewProduct((previous) => ({
+                              ...previous,
+                              description: event.target.value,
+                            }))
+                          }
+                          placeholder="Enter a short product description..."
+                          rows={4}
+                          style={{
+                            width: "100%",
+                            resize: "vertical",
+                            padding: "12px",
+                            border: "1px solid #d5e3e6",
+                            borderRadius: "10px",
+                            fontFamily: "inherit",
+                            fontSize: "0.95rem",
+                            boxSizing: "border-box",
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="admin-employee-modal-footer">
+                    <button
+                      type="button"
+                      className="admin-cancel-button"
+                      onClick={closeProductModal}
+                      disabled={savingProduct}
+                    >
+                      Cancel
+                    </button>
+
+                    <button
+                      type="button"
+                      className="admin-primary-button"
+                      onClick={handleSaveProduct}
+                      disabled={savingProduct}
+                    >
+                      {savingProduct
+                        ? "Saving..."
+                        : editingProductId
+                          ? "Save Changes"
+                          : "Add Product"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
             {/* REPORTS */}
 
             {activeSection === "reports" && (
